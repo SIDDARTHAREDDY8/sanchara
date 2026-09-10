@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.db-journal
+.env
+.DS_Store
+demo/__pycache__/
+control-plane/artifacts/

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sanchara — Fleet Update Control</title>
+<style>
+  :root { --bg:#0e1116; --panel:#171c24; --line:#262d38; --txt:#dbe2ec; --dim:#8b94a3;
+          --ok:#3ecf8e; --warn:#f5a524; --bad:#f31260; --info:#4aa8ff; }
+  * { box-sizing:border-box; font-family: ui-sans-serif, system-ui, sans-serif; }
+  body { background:var(--bg); color:var(--txt); margin:0; padding:20px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  h1 span { color:var(--info); }
+  .sub { color:var(--dim); font-size:13px; margin-bottom:18px; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .card h2 { font-size:14px; margin:0 0 10px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em;}
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; color:var(--dim); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--line); }
+  td { padding:6px 8px; border-bottom:1px solid var(--line); }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .p-running{background:#1c2f4a;color:var(--info)} .p-completed{background:#12382a;color:var(--ok)}
+  .p-halted,.p-failed{background:#3d1424;color:var(--bad)} .p-rolling_back{background:#3a2c10;color:var(--warn)}
+  .p-succeeded,.p-rolled_back{background:#12382a;color:var(--ok)} .p-pending{background:#2a2f38;color:var(--dim)}
+  .p-assigned,.p-downloading,.p-applying,.p-verifying{background:#1c2f4a;color:var(--info)}
+  .p-skipped{background:#2a2f38;color:var(--warn)}
+  #events { max-height:420px; overflow-y:auto; font-size:12.5px; }
+  .ev { padding:6px 0; border-bottom:1px solid var(--line); }
+  .ev .t { color:var(--dim); margin-right:8px; }
+  .ev.bad { color:#ff8fb0; } .ev.good { color:#8fe6b8; } .ev.info { color:#a9ccf5; }
+  .bar { height:8px; background:#242b36; border-radius:4px; overflow:hidden; margin:8px 0; }
+  .bar > div { height:100%; background:var(--info); }
+  select { background:var(--panel); color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:6px; }
+  .ver { font-family:ui-monospace,monospace; }
+</style>
+</head>
+<body>
+<h1><span>Sanchara</span> — fleet update control</h1>
+<div class="sub">ROS-aware over-the-air update management · state-gated rollouts · automatic rollback</div>
+
+<div class="card" style="margin-bottom:16px">
+  <h2>Deployment</h2>
+  <select id="depSel"></select>
+  <span id="depMeta" style="margin-left:12px;color:var(--dim);font-size:13px"></span>
+  <div class="bar"><div id="progBar" style="width:0%"></div></div>
+  <div id="counts" style="font-size:13px;color:var(--dim)"></div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Robots</h2>
+    <table><thead><tr><th>Robot</th><th>Version</th><th>State</th><th>Task</th></tr></thead>
+    <tbody id="robots"></tbody></table>
+  </div>
+  <div class="card">
+    <h2>Event log</h2>
+    <div id="events"></div>
+  </div>
+</div>
+
+<script>
+let depId = null, fleetId = "warehouse-a";
+async function j(u, o){ const r = await fetch(u, o); return r.json(); }
+
+async function refreshDeps(){
+  const d = await j("/api/deployments");
+  const sel = document.getElementById("depSel");
+  const cur = sel.value;
+  sel.innerHTML = "";
+  d.deployments.forEach(x => {
+    const o = document.createElement("option");
+    o.value = x.id; o.textContent = `${x.release_version} → ${x.fleet_id} (${x.status})`;
+    sel.appendChild(o);
+  });
+  sel.value = d.deployments.some(x=>x.id===cur) ? cur : (d.deployments[0]?.id || "");
+  depId = sel.value;
+  if (d.deployments[0]) fleetId = d.deployments[0].fleet_id;
+}
+async function refresh(){
+  if(!depId) return;
+  const dep = await j(`/api/deployments/${depId}`);
+  const counts = dep.task_counts || {};
+  const total = Object.values(counts).reduce((a,b)=>a+b,0);
+  const done = (counts.succeeded||0)+(counts.rolled_back||0)+(counts.skipped||0);
+  document.getElementById("progBar").style.width = total? (100*done/total).toFixed(0)+"%":"0%";
+  document.getElementById("depMeta").innerHTML =
+    `release <span class="ver">${dep.release_version||""}</span> · stage ${dep.current_stage} · <span class="pill p-${dep.status}">${dep.status}</span>`;
+  document.getElementById("counts").textContent =
+    Object.entries(counts).map(([k,v])=>`${k}: ${v}`).join(" · ") || "no tasks yet";
+
+  const rb = await j(`/api/fleets/${dep.fleet_id}/robots`);
+  const taskByRobot = {};
+  (dep.tasks||[]).forEach(t => { taskByRobot[t.robot_id] = t; });
+  document.getElementById("robots").innerHTML = rb.robots.map(r => {
+    const state = r.on_mission ? "on mission" : (r.docked ? "docked" : "idle");
+    const t = taskByRobot[r.id];
+    return `<tr><td><b>${r.id}</b><br><span style="color:var(--dim)">${r.ros_distro} · ${r.hw_model} · ${Math.round(r.battery_pct)}%</span></td>
+      <td class="ver">${r.current_version||"?"}</td>
+      <td>${state}${r.charging?" ⚡":""}</td>
+      <td>${t?`<span class="pill p-${t.status}">${t.status}</span><br><span style="color:var(--dim);font-size:11px">${t.from_version}→${t.to_version}${t.is_rollback?" (rollback)":""}</span>`:'<span style="color:var(--dim)">—</span>'}</td></tr>`;
+  }).join("");
+
+  const ev = await j(`/api/deployments/${depId}/events?limit=80`);
+  document.getElementById("events").innerHTML = ev.events.slice().reverse().map(e => {
+    const cls = /fail|halt/i.test(e.kind+e.message) ? "bad" : /succeed|complete|rollback/i.test(e.kind) ? "good" : "info";
+    const ts = new Date(e.ts*1000).toLocaleTimeString();
+    return `<div class="ev ${cls}"><span class="t">${ts}</span><b>${e.robot_id||"fleet"}</b> — ${e.message}</div>`;
+  }).join("");
+}
+document.getElementById("depSel").addEventListener("change", e => { depId = e.target.value; refresh(); });
+(async function loop(){
+  await refreshDeps().catch(()=>{});
+  await refresh().catch(()=>{});
+  setTimeout(loop, 2000);
+})();
+</script>
+</body>
+</html>

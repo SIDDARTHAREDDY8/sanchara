@@ -1,0 +1,6 @@
+# Sanchara Python dependencies. Lower bounds only (unpinned-major style);
+# resolve freely within a major release line.
+fastapi>=0.110
+uvicorn>=0.29
+requests>=2.31
+cryptography>=42

@@ -1,0 +1,10 @@
+# Keep images lean and avoid leaking local state.
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.db-journal
+.git/
+tests/
+demo/

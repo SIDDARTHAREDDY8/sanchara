@@ -1,0 +1,59 @@
+# Sanchara local stack: control plane + 3 simulated robots.
+# Agents only start once the control plane reports healthy on /ready.
+# Usage: docker compose up --build
+services:
+  control-plane:
+    build:
+      context: .
+      target: control-plane
+    ports:
+      - "8000:8000"
+    environment:
+      SANCHARA_PORT: "8000"
+      SANCHARA_DB: /data/sanchara.db
+      SANCHARA_LOG_LEVEL: INFO
+    volumes:
+      - sanchara-db:/data
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  agent-1:
+    build:
+      context: .
+      target: agent
+    command: ["--server", "http://control-plane:8000", "--robot-id", "wbot-c1",
+              "--fleet", "warehouse-a", "--docked", "--charging"]
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    restart: "on-failure"
+
+  agent-2:
+    build:
+      context: .
+      target: agent
+    command: ["--server", "http://control-plane:8000", "--robot-id", "wbot-c2",
+              "--fleet", "warehouse-a", "--docked", "--charging"]
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    restart: "on-failure"
+
+  agent-3:
+    build:
+      context: .
+      target: agent
+    command: ["--server", "http://control-plane:8000", "--robot-id", "wbot-c3",
+              "--fleet", "warehouse-a", "--docked", "--charging"]
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    restart: "on-failure"
+
+volumes:
+  sanchara-db:
